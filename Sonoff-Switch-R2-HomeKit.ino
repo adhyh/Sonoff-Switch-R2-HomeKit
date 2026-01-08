@@ -10,7 +10,6 @@
 #include <WiFi.h>
 #include <Preferences.h>
 #include <WiFiManager.h>
-#include <Update.h>
 #include <HomeSpan.h>
 
 #include "hw/hw_select.h"
@@ -59,18 +58,15 @@ static String formatHKPin(const String &pin) {
 }
 
 // ==================================================
-// Identity helpers
+// Hostname / AP name
 // ==================================================
-static void macSuffix(char *out, size_t len) {
+static String buildHostname() {
   uint64_t mac = ESP.getEfuseMac();
-  snprintf(out, len, "%02X%02X%02X",
+  char suf[7];
+  snprintf(suf, sizeof(suf), "%02X%02X%02X",
            (uint8_t)(mac >> 16),
            (uint8_t)(mac >> 8),
            (uint8_t)(mac));
-}
-
-static String buildHostname() {
-  char suf[7]; macSuffix(suf, sizeof(suf));
 #if defined(SONOFF_R4_MINI)
   return String("Sonoff Mini R4-") + suf;
 #elif defined(SONOFF_R4_BASIC)
@@ -80,13 +76,13 @@ static String buildHostname() {
 #endif
 }
 
-static String modelName() {
+static const char* provisioningAPName() {
 #if defined(SONOFF_R4_MINI)
-  return "Sonoff Mini R4";
+  return "Sonoff-Mini-R4-Setup";
 #elif defined(SONOFF_R4_BASIC)
-  return "Sonoff Basic R4";
+  return "Sonoff-Basic-R4-Setup";
 #else
-  return "Sonoff R4 (Unknown)";
+  return "Sonoff-R4-Setup";
 #endif
 }
 
@@ -132,7 +128,7 @@ static void factoryReset() {
 }
 
 // ==================================================
-// Provisioning (non-blocking, handbediening actief)
+// Provisioning
 // ==================================================
 static bool g_toggleFromPortal = false;
 static bool g_invertFromPortal = false;
@@ -148,123 +144,68 @@ static void runProvisioning() {
 
   WiFiManager wm;
   wm.setConfigPortalTimeout(0);
+  wm.setEnableConfigPortal(true);
 
-  // ---------- Custom CSS + FW footer ----------
-  String headHtml =
-    String(R"rawliteral(
+  // --- UI fixes ---
+  wm.setCustomHeadElement(R"rawliteral(
 <style>
-  .opt-group {
-    margin:14px 0;
-    padding:14px;
-    border:1px solid #ddd;
-    border-radius:10px;
-    background:#fafafa;
-  }
-  .opt-row {
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    margin:12px 0;
-    font-size:16px;
-  }
-  /* iOS style switch */
-  .ios-switch {
-    position: relative;
-    width: 52px;
-    height: 32px;
-  }
-  .ios-switch input {
-    display:none;
-  }
-  .slider {
-    position:absolute;
-    cursor:pointer;
-    inset:0;
-    background:#ccc;
-    border-radius:32px;
-    transition:.25s;
-  }
-  .slider:before {
-    content:"";
-    position:absolute;
-    height:26px;
-    width:26px;
-    left:3px;
-    top:3px;
-    background:white;
-    border-radius:50%;
-    transition:.25s;
-    box-shadow:0 1px 3px rgba(0,0,0,.4);
-  }
-  .ios-switch input:checked + .slider {
-    background:#34C759;
-  }
-  .ios-switch input:checked + .slider:before {
-    transform:translateX(20px);
-  }
-  .fw-footer {
-    position: fixed;
-    bottom: 6px;
-    left: 0;
-    right: 0;
-    text-align: center;
-    font-size: 12px;
-    color: #666;
-    pointer-events: none;
-  }
-</style>
-<div class="fw-footer">Firmware version )rawliteral")
-    + FW_VERSION +
-    R"rawliteral(</div>)rawliteral";
+/* hide info button */
+a[href="/i"] { display:none !important; }
 
-  wm.setCustomHeadElement(headHtml.c_str());
+/* rename Configure WiFi -> Configure */
+button[name="save"] span { display:none; }
+button[name="save"]::after {
+  content: "Configure";
+  font-size: 16px;
+}
+
+/* firmware text */
+.fw-version {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #666;
+  text-align: right;
+}
+</style>
+)rawliteral");
 
   wm.setSaveParamsCallback([&]() {
     g_toggleFromPortal = wm.server->hasArg("toggle");
     g_invertFromPortal = wm.server->hasArg("invert");
   });
 
-  // ---------- HomeKit PIN ----------
+  // --- HomeKit PIN ---
   String hkHtml =
-    "<div style='padding:12px;border:2px solid #444;border-radius:10px;text-align:center'>"
+    "<div style='padding:12px;border:2px solid #444;border-radius:8px;text-align:center'>"
     "<div>HomeKit pairing code</div>"
     "<div style='font-size:26px;font-weight:bold'>" +
     formatHKPin(pin) +
     "</div></div>";
-  WiFiManagerParameter hkInfo("", "", hkHtml.c_str(), 0);
-  wm.addParameter(&hkInfo);
+  wm.addParameter(new WiFiManagerParameter(hkHtml.c_str()));
 
-  // ---------- iOS style switches ----------
-  const char *optionsHtml = R"rawliteral(
-<div class="opt-group">
-  <div class="opt-row">
-    <span>Toggle switch mode</span>
-    <label class="ios-switch">
-      <input type="checkbox" name="toggle">
-      <span class="slider"></span>
-    </label>
-  </div>
-  <div class="opt-row">
-    <span>Invert relay state</span>
-    <label class="ios-switch">
-      <input type="checkbox" name="invert">
-      <span class="slider"></span>
-    </label>
-  </div>
+  // --- Options (unchanged, proven layout) ---
+  String optionsHtml =
+    String(R"rawliteral(
+<div style="margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px">
+  <label><input type="checkbox" name="toggle"> Toggle switch mode</label><br>
+  <label><input type="checkbox" name="invert"> Invert relay state</label>
 </div>
-)rawliteral";
-  WiFiManagerParameter pOptions("", "", optionsHtml, 0);
-  wm.addParameter(&pOptions);
+<div class="fw-version">Firmware version )rawliteral")
+    + FW_VERSION +
+    R"rawliteral(</div>)rawliteral";
 
-  wm.startConfigPortal("Sonoff-R4-Setup");
+  wm.addParameter(new WiFiManagerParameter(optionsHtml.c_str()));
+
+  wm.startConfigPortal(provisioningAPName());
 
   while (true) {
     wm.process();
-    hw.poll();        // handbediening altijd
+    hw.poll();
     delay(5);
 
     if (WiFi.status() == WL_CONNECTED) {
-      saveConfig(WiFi.SSID(), WiFi.psk(), pin, g_toggleFromPortal, g_invertFromPortal);
+      saveConfig(WiFi.SSID(), WiFi.psk(), pin,
+                 g_toggleFromPortal, g_invertFromPortal);
       ESP.restart();
     }
   }
@@ -277,13 +218,11 @@ static void runHomeSpan(const String &ssid,
                         const String &pass,
                         const String &pin) {
 
-  String hostname = buildHostname();
-  WiFi.setHostname(hostname.c_str());
+  WiFi.setHostname(buildHostname().c_str());
 
   strlcpy(hkPin, pin.c_str(), sizeof(hkPin));
   homeSpan.setPairingCode(hkPin);
   homeSpan.setWifiCredentials(ssid.c_str(), pass.c_str());
-  homeSpan.enableOTA(false);
 
   homeSpan.setPairCallback([](boolean paired) {
     if (!paired) g_resetRequested = true;
@@ -294,16 +233,12 @@ static void runHomeSpan(const String &ssid,
     new Service::AccessoryInformation();
     new Characteristic::Identify();
     new Characteristic::Manufacturer("Sonoff");
-    new Characteristic::Model(modelName().c_str());
-
-    char sn[7]; macSuffix(sn, sizeof(sn));
-    new Characteristic::SerialNumber(sn);
+    new Characteristic::Model("Sonoff R4");
     new Characteristic::FirmwareRevision(FW_VERSION);
-
     hk = new SwitchHomeKit(hw.logicalState);
   }
 
-  homeSpan.begin(Category::Switches, hostname.c_str());
+  homeSpan.begin(Category::Switches, buildHostname().c_str());
   hw.homekitActive = true;
 }
 
@@ -315,23 +250,18 @@ void setup() {
   Serial.begin(115200);
   delay(300);
 
-  hw.begin();   // hardware altijd actief
+  hw.begin();
 
   hw.onToggle = [](bool on) {
     if (hk) hk->sync(on);
   };
-
-  hw.onLongPress = []() {
-    factoryReset();
-  };
+  hw.onLongPress = factoryReset;
 
   String ssid, pass, pin;
-  bool toggle = false;
-  bool invert = false;
+  bool toggle = false, invert = false;
 
-  if (!loadConfig(ssid, pass, pin, toggle, invert)) {
-    runProvisioning();   // keert alleen terug via reboot
-  }
+  if (!loadConfig(ssid, pass, pin, toggle, invert))
+    runProvisioning();
 
   hw.toggleMode  = toggle;
   hw.invertRelay = invert;
@@ -340,12 +270,10 @@ void setup() {
 }
 
 void loop() {
-
   if (g_resetRequested) {
     g_resetRequested = false;
     factoryReset();
   }
-
-  hw.poll();        // altijd actief
-  homeSpan.poll();  // HomeKit / netwerk
+  hw.poll();
+  homeSpan.poll();
 }
