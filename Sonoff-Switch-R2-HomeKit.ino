@@ -89,7 +89,8 @@ static const char* provisioningAPName() {
 // ==================================================
 // Config load/save
 // ==================================================
-static bool loadConfig(String &ssid, String &pass, String &pin, bool &toggle, bool &invert) {
+static bool loadConfig(String &ssid, String &pass, String &pin,
+                       bool &toggle, bool &invert) {
   prefs.begin(PREF_NS, true);
   ssid   = prefs.getString(K_SSID, "");
   pass   = prefs.getString(K_PASS, "");
@@ -128,7 +129,7 @@ static void factoryReset() {
 }
 
 // ==================================================
-// Provisioning
+// Provisioning (WiFiManager)
 // ==================================================
 static bool g_toggleFromPortal = false;
 static bool g_invertFromPortal = false;
@@ -146,25 +147,23 @@ static void runProvisioning() {
   wm.setConfigPortalTimeout(0);
   wm.setEnableConfigPortal(true);
 
-  // --- UI fixes ---
+  // --- Menu: WiFi + Update + Exit (no Info) ---
+  std::vector<const char*> menu = {
+    "wifi",
+    "update",
+    "exit"
+  };
+  wm.setMenu(menu);
+
+  // --- Optional minimal styling (safe) ---
   wm.setCustomHeadElement(R"rawliteral(
 <style>
-/* hide info button */
-a[href="/i"] { display:none !important; }
-
-/* rename Configure WiFi -> Configure */
-button[name="save"] span { display:none; }
-button[name="save"]::after {
-  content: "Configure";
-  font-size: 16px;
-}
-
-/* firmware text */
+a[href="/i"] { display:none !important; }  /* hide info link if present */
 .fw-version {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #666;
-  text-align: right;
+  margin-top:6px;
+  font-size:12px;
+  color:#666;
+  text-align:right;
 }
 </style>
 )rawliteral");
@@ -174,16 +173,17 @@ button[name="save"]::after {
     g_invertFromPortal = wm.server->hasArg("invert");
   });
 
-  // --- HomeKit PIN ---
+  // --- HomeKit PIN block ---
   String hkHtml =
     "<div style='padding:12px;border:2px solid #444;border-radius:8px;text-align:center'>"
     "<div>HomeKit pairing code</div>"
     "<div style='font-size:26px;font-weight:bold'>" +
     formatHKPin(pin) +
     "</div></div>";
+
   wm.addParameter(new WiFiManagerParameter(hkHtml.c_str()));
 
-  // --- Options (unchanged, proven layout) ---
+  // --- Options + FW version ---
   String optionsHtml =
     String(R"rawliteral(
 <div style="margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px">
@@ -200,12 +200,17 @@ button[name="save"]::after {
 
   while (true) {
     wm.process();
-    hw.poll();
+    hw.poll();   // physical control always active
     delay(5);
 
     if (WiFi.status() == WL_CONNECTED) {
-      saveConfig(WiFi.SSID(), WiFi.psk(), pin,
-                 g_toggleFromPortal, g_invertFromPortal);
+      saveConfig(
+        WiFi.SSID(),
+        WiFi.psk(),
+        pin,
+        g_toggleFromPortal,
+        g_invertFromPortal
+      );
       ESP.restart();
     }
   }
