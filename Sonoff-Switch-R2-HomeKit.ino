@@ -4,7 +4,7 @@
 //#define SONOFF_R4_MINI
 #define SONOFF_R4_BASIC
 
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "1.0.1"
 
 #include <Arduino.h>
 #include <WiFi.h>
