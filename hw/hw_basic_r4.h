@@ -3,9 +3,10 @@
 
 struct BasicR4Hardware : HardwareBase {
   BasicR4Hardware() : HardwareBase(
-    6,  // LED
-    4,  // Relay (check PCB revision!)
-    9,   // Button
-    -1   // No external switch
+    6,    // LED
+    4,    // Relay (check PCB revision!)
+    9,    // Button
+    -1,   // No external switch
+    false // LED active low
   ) {}
 };
