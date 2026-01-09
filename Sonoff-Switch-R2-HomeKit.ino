@@ -1,8 +1,8 @@
 // ==================================================
 // Hardware selection
 // ==================================================
-#define SONOFF_R4_MINI
-// #define SONOFF_R4_BASIC
+//#define SONOFF_R4_MINI
+#define SONOFF_R4_BASIC
 
 #define FW_VERSION "1.0.0"
 
@@ -91,12 +91,18 @@ static const char* provisioningAPName() {
 // ==================================================
 static bool loadConfig(String &ssid, String &pass, String &pin,
                        bool &toggle, bool &invert) {
+
   prefs.begin(PREF_NS, true);
   ssid   = prefs.getString(K_SSID, "");
   pass   = prefs.getString(K_PASS, "");
   pin    = prefs.getString(K_PIN, "");
-  toggle = prefs.getBool(K_TOGGLE, false);
+
+  toggle = (hw.switchPin != -1)
+             ? prefs.getBool(K_TOGGLE, false)
+             : false;
+
   invert = prefs.getBool(K_INVERT, false);
+
   prefs.end();
   return (ssid.length() && pin.length() == 8);
 }
@@ -106,12 +112,16 @@ static void saveConfig(const String &ssid,
                        const String &pin,
                        bool toggle,
                        bool invert) {
+
   prefs.begin(PREF_NS, false);
   prefs.putString(K_SSID, ssid);
   prefs.putString(K_PASS, pass);
   prefs.putString(K_PIN,  pin);
-  prefs.putBool  (K_TOGGLE, toggle);
-  prefs.putBool  (K_INVERT, invert);
+
+  if (hw.switchPin != -1)
+    prefs.putBool(K_TOGGLE, toggle);
+
+  prefs.putBool(K_INVERT, invert);
   prefs.end();
 }
 
@@ -129,7 +139,7 @@ static void factoryReset() {
 }
 
 // ==================================================
-// Provisioning (WiFiManager)
+// Provisioning
 // ==================================================
 static bool g_toggleFromPortal = false;
 static bool g_invertFromPortal = false;
@@ -147,7 +157,6 @@ static void runProvisioning() {
   wm.setConfigPortalTimeout(0);
   wm.setEnableConfigPortal(true);
 
-  // --- Menu: WiFi + Update + Exit (no Info) ---
   std::vector<const char*> menu = {
     "wifi",
     "update",
@@ -155,25 +164,14 @@ static void runProvisioning() {
   };
   wm.setMenu(menu);
 
-  // --- Optional minimal styling (safe) ---
-  wm.setCustomHeadElement(R"rawliteral(
-<style>
-a[href="/i"] { display:none !important; }  /* hide info link if present */
-.fw-version {
-  margin-top:6px;
-  font-size:12px;
-  color:#666;
-  text-align:right;
-}
-</style>
-)rawliteral");
-
   wm.setSaveParamsCallback([&]() {
-    g_toggleFromPortal = wm.server->hasArg("toggle");
+    if (hw.switchPin != -1)
+      g_toggleFromPortal = wm.server->hasArg("toggle");
+
     g_invertFromPortal = wm.server->hasArg("invert");
   });
 
-  // --- HomeKit PIN block ---
+  // HomeKit PIN
   String hkHtml =
     "<div style='padding:12px;border:2px solid #444;border-radius:8px;text-align:center'>"
     "<div>HomeKit pairing code</div>"
@@ -183,16 +181,18 @@ a[href="/i"] { display:none !important; }  /* hide info link if present */
 
   wm.addParameter(new WiFiManagerParameter(hkHtml.c_str()));
 
-  // --- Options + FW version ---
+  // Options
   String optionsHtml =
-    String(R"rawliteral(
-<div style="margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px">
-  <label><input type="checkbox" name="toggle"> Toggle switch mode</label><br>
-  <label><input type="checkbox" name="invert"> Invert relay state</label>
-</div>
-<div class="fw-version">Firmware version )rawliteral")
-    + FW_VERSION +
-    R"rawliteral(</div>)rawliteral";
+    "<div style='margin:14px 0;padding:12px;border:1px solid #ddd;border-radius:8px'>";
+
+  if (hw.switchPin != -1)
+    optionsHtml +=
+      "<label><input type='checkbox' name='toggle'> Toggle switch mode</label><br>";
+
+  optionsHtml +=
+    "<label><input type='checkbox' name='invert'> Invert relay state</label>"
+    "</div>"
+    "<div class='fw-version'>Firmware version " FW_VERSION "</div>";
 
   wm.addParameter(new WiFiManagerParameter(optionsHtml.c_str()));
 
@@ -200,17 +200,13 @@ a[href="/i"] { display:none !important; }  /* hide info link if present */
 
   while (true) {
     wm.process();
-    hw.poll();   // physical control always active
+    hw.poll();
     delay(5);
 
     if (WiFi.status() == WL_CONNECTED) {
-      saveConfig(
-        WiFi.SSID(),
-        WiFi.psk(),
-        pin,
-        g_toggleFromPortal,
-        g_invertFromPortal
-      );
+      saveConfig(WiFi.SSID(), WiFi.psk(), pin,
+                 g_toggleFromPortal,
+                 g_invertFromPortal);
       ESP.restart();
     }
   }
@@ -244,8 +240,15 @@ static void runHomeSpan(const String &ssid,
   }
 
   homeSpan.begin(Category::Switches, buildHostname().c_str());
+
+#if defined(SONOFF_R4_BASIC)
+  // ESP32-C3: HomeKit over IP requires IPv6
+  WiFi.enableIPv6();
+#endif
+
   hw.homekitActive = true;
 }
+
 
 // ==================================================
 // Arduino lifecycle
@@ -255,7 +258,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
 
-  hw.begin();
+  hw.begin();   // switchPin is now known
 
   hw.onToggle = [](bool on) {
     if (hk) hk->sync(on);
@@ -268,7 +271,7 @@ void setup() {
   if (!loadConfig(ssid, pass, pin, toggle, invert))
     runProvisioning();
 
-  hw.toggleMode  = toggle;
+  hw.toggleMode  = (hw.switchPin != -1) ? toggle : false;
   hw.invertRelay = invert;
 
   runHomeSpan(ssid, pass, pin);
