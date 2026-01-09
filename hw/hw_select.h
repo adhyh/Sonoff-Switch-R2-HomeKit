@@ -1,11 +1,6 @@
 #pragma once
 #include <Arduino.h>
 
-// Alleen ESP32 classic toegestaan
-#if !CONFIG_IDF_TARGET_ESP32
-  #error This firmware supports only ESP32 classic
-#endif
-
 #if defined(SONOFF_R4_BASIC)
 
   #include "hw_basic_r4.h"
