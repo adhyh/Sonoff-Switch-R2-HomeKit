@@ -11,6 +11,7 @@ struct HardwareBase {
   const int relayPin;
   const int buttonPin;
   const int switchPin;
+  const bool ledActiveLow; 
 
   // ================= Debounce =================
   Bounce debButton;
@@ -41,8 +42,8 @@ struct HardwareBase {
   std::function<void()> onLongPress = nullptr;
 
   // ================= Constructor =================
-  HardwareBase(int led, int relay, int button, int sw)
-  : ledPin(led), relayPin(relay), buttonPin(button), switchPin(sw) {}
+  HardwareBase(int led, int relay, int button, int sw, bool ledLow)
+  : ledPin(led), relayPin(relay), buttonPin(button), switchPin(sw), ledActiveLow(ledLow) {}
 
   // ================= Init =================
   void begin() {
@@ -81,9 +82,11 @@ struct HardwareBase {
     logicalState = on;
 
     // fysieke aansturing (active LOW), met optionele invert
-    bool physicalOn = invertRelay ? !on : on;
+    bool physicalOn = invertRelay ? on : !on;
+    bool ledOn = ledActiveLow ? on : !on;
+
     digitalWrite(relayPin, physicalOn ? LOW : HIGH);
-    digitalWrite(ledPin,   on ? LOW : HIGH);
+    digitalWrite(ledPin, ledOn ? LOW : HIGH);
 
     if (notifyHK && homekitActive && onToggle) {
       Serial.println(F("[HW] notifying HomeKit"));
