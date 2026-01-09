@@ -7,6 +7,7 @@ struct MiniR4Hardware : HardwareBase {
     19,  // LED
     26,  // Relay
     0,   // Button
-    27   // S2
+    27,  // S2
+    true // LED active low
   ) {}
 };
